@@ -16,31 +16,20 @@
 
 package com.palantir.docker.compose.example;
 
-import static com.palantir.docker.compose.example.MyServices.SELENIUM;
-
 import com.palantir.docker.compose.DockerComposeRule;
-import org.junit.BeforeClass;
 import org.junit.ClassRule;
 import org.junit.Test;
-import org.openqa.selenium.WebDriver;
 
-public class ExampleSeleniumTest {
+public class ExampleTest {
 
     @ClassRule
     public static final DockerComposeRule rule = DockerComposeRule.builder()
-            .file("src/test/resources/example-docker-compose.yml")
-            .addClusterWait(SELENIUM)
+            .file("src/test/resources/docker-compose.yaml")
+            .addClusterWait(MyServices.POSTGRES)
             .build();
-
-    @BeforeClass
-    public static void beforeClass() throws Exception {
-        //SELENIUM.openVNC(rule);
-    }
 
     @Test
     public void someTest() throws Exception {
-        WebDriver driver = SELENIUM.driver(rule);
-        driver.get("https://google.com/");
     }
 
 }

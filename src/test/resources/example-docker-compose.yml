@@ -1,5 +1,0 @@
-selenium:
-    image: selenium/standalone-chrome-debug:2.52.0
-    ports:
-      - "5900" # VNC port
-      - "4444" # selenium port

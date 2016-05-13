@@ -69,5 +69,5 @@ dependencies {
     testCompile "org.mockito:mockito-core:$mockitoVersion"
     testCompile "com.github.tomakehurst:wiremock:2.0.6-beta"
     testCompile "com.google.code.findbugs:jsr305:3.0.0"
-    testCompile 'org.seleniumhq.selenium:selenium-remote-driver:2.48.2'
+    testCompile "org.dbunit:dbunit:2.5.1"
 }

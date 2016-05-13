@@ -19,5 +19,5 @@ package com.palantir.docker.compose.example;
 public final class MyServices {
     private MyServices() {}
 
-    public static final SeleniumService SELENIUM = new SeleniumService();
+    public static final PostgresService POSTGRES = new PostgresService();
 }

@@ -26,17 +26,13 @@ import org.junit.Test;
 public class WaitRuleExtensionTest {
 
     private WaitRule r1 = WaitRule.builder()
-            .doNothingMethod()
             .waitFor(mock(ClusterWait.class))
-            .waitingForService(null, null, null)
-            .waitingForService(null, null, null)
             .cluster(mock(Cluster.class))
             .build();
 
-    private WaitRule r2 = new MyWaitForBuilder()
+    private WaitRule r2 = new MyBuilder()
             .addTwoClusterWaits(mock(ClusterWait.class), mock(ClusterWait.class))
             .waitFor(mock(ClusterWait.class))
-            .doNothingMethod()
             .waitFor(mock(ClusterWait.class))
             .addTwoClusterWaits(mock(ClusterWait.class), mock(ClusterWait.class))
             .cluster(mock(Cluster.class))
@@ -47,7 +43,7 @@ public class WaitRuleExtensionTest {
 
     }
 
-    public interface MyBuilderMixin<B> extends WaitRule.BuilderMixin1<B> {
+    public interface MyMixin<B> extends WaitRule.NiceFeature1<B> {
 
         default B addTwoClusterWaits(ClusterWait one, ClusterWait two) {
             waitFor(one);
@@ -57,14 +53,15 @@ public class WaitRuleExtensionTest {
 
     }
 
-    public static class MyWaitForBuilder extends AbstractBuilder implements MyBuilderMixin<MyWaitForBuilder> {
+    public static class MyBuilder extends AbstractBuilder
+            implements MyMixin<MyBuilder>, WaitRule.NiceFeature2<MyBuilder> {
 
-        public MyWaitForBuilder addThreeWaits(ClusterWait one, ClusterWait two, ClusterWait three) {
+        public MyBuilder addThreeWaits(ClusterWait one, ClusterWait two, ClusterWait three) {
             return waitFor(one).waitFor(two).waitFor(three);
         }
 
         @Override
-        public MyWaitForBuilder self() {
+        public MyBuilder self() {
             return this;
         }
 

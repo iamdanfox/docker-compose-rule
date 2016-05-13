@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.palantir.docker.compose;
+package com.palantir.docker.compose.wait;
 
 import static org.mockito.Matchers.any;
 import static org.mockito.Mockito.inOrder;
@@ -22,10 +22,11 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.google.common.collect.ImmutableList;
+import com.palantir.docker.compose.DockerComposeRule;
 import com.palantir.docker.compose.connection.Cluster;
 import com.palantir.docker.compose.connection.waiting.ClusterWait;
-import com.palantir.docker.compose.wait.WaitFor;
-import com.palantir.docker.compose.wait.WaitRule;
+import java.util.List;
 import org.junit.BeforeClass;
 import org.junit.Rule;
 import org.junit.Test;
@@ -66,20 +67,8 @@ public class WaitRuleTest {
     @Test
     public void shouldExplodeIfWaitForAnnotatedFieldIsntClusterWait() {
         exception.expect(RuntimeException.class);
-        exception.expectMessage("Field service1 must be a ClusterWait.");
+        exception.expectMessage("Field service1 must be a ClusterWait or List<ClusterWait>.");
         SuiteWithBadField suite = new SuiteWithBadField();
-        new WaitRule(suite);
-    }
-
-    private static class SuiteWithCorrectField {
-        public static final DockerComposeRule dcr = docker;
-        @WaitFor
-        public static final ClusterWait service1 = mock(ClusterWait.class);
-    }
-
-    @Test
-    public void ruleShouldInitialiseHappilyIfAnnotationsAreGood() {
-        SuiteWithCorrectField suite = new SuiteWithCorrectField();
         new WaitRule(suite);
     }
 
@@ -92,14 +81,35 @@ public class WaitRuleTest {
     }
 
     @Test
-    public void ruleShouldWaitForAllClusterWaits() {
-        SuiteWithTwoFields suite = new SuiteWithTwoFields();
+    public void ruleShouldExplodeIfMultipleAnnotationsClusterWaits() {
+        exception.expect(IllegalStateException.class);
+        exception.expectMessage("Only one @WaitFor field allowed - "
+                + "please pass a List<ClusterWait> if you want multiple.");
+        new WaitRule(new SuiteWithTwoFields());
+    }
 
-        WaitRule rule = new WaitRule(suite);
-        simulateJunitRun(rule);
+    private static class SuiteWithCorrectField {
+        public static final DockerComposeRule dcr = docker;
+        @WaitFor
+        public static final ClusterWait service1 = mock(ClusterWait.class);
+    }
 
-        verify(suite.service1).waitUntilReady(any());
-        verify(suite.service2).waitUntilReady(any());
+    @Test
+    public void ruleShouldInitialiseHappilyIfAnnotationsAreGood() {
+        new WaitRule(new SuiteWithCorrectField());
+    }
+
+    private static class SuiteWithAnnotatedList {
+        public static final DockerComposeRule dcr = docker;
+        @WaitFor
+        public static final List<ClusterWait> services = ImmutableList.of(
+                mock(ClusterWait.class),
+                mock(ClusterWait.class));
+    }
+
+    @Test
+    public void ruleShouldInitialiseHappilyIfListIsAnnotatedWithWaitFor() {
+        new WaitRule(new SuiteWithAnnotatedList());
     }
 
     @Test

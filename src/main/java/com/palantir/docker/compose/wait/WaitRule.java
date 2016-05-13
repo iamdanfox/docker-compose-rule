@@ -35,12 +35,12 @@ public class WaitRule implements TestRule {
     private final Cluster cluster;
 
     public WaitRule(Object suite) {
-        List<Field> allAnnotatedFields = allAnnotatedFields(suite);
+        List<Field> allAnnotatedFields = allWaitForAnnotatedFields(suite);
         clusterWaits = clusterWaits(allAnnotatedFields, suite);
         cluster = extractClusterFromSuite(suite);
     }
 
-    private static List<Field> allAnnotatedFields(Object suite) {
+    private static List<Field> allWaitForAnnotatedFields(Object suite) {
         List<Field> list = Arrays.stream(suite.getClass().getFields())
                 .filter(field -> field.getAnnotation(WaitFor.class) != null)
                 .collect(toList());
@@ -48,18 +48,34 @@ public class WaitRule implements TestRule {
             throw new IllegalStateException(
                     "WaitRule requires at least one @WaitFor annotated field.");
         }
+        if (list.size() > 1) {
+            throw new IllegalStateException(
+                    "Only one @WaitFor field allowed - please pass a List<ClusterWait> if you want multiple.");
+        }
         return list;
     }
 
     private static List<ClusterWait> clusterWaits(List<Field> annotatedFields, Object instance) {
         return annotatedFields.stream()
                 .peek(field -> field.setAccessible(true))
-                .map(field -> {
+                .flatMap(field -> {
                     try {
-                        return (ClusterWait) field.get(instance);
+                        Object fieldValue = field.get(instance);
+
+                        if (ClusterWait.class.isAssignableFrom(fieldValue.getClass())) {
+                            return Stream.of((ClusterWait) fieldValue);
+                        }
+
+                        if (List.class.isAssignableFrom(fieldValue.getClass())) {
+                            List<ClusterWait> list = (List<ClusterWait>) fieldValue;
+                            return list.stream();
+                        }
+
+                        throw new RuntimeException(String.format(
+                                "Field %s must be a ClusterWait or List<ClusterWait>.", field.getName()));
                     } catch (Exception e) {
                         throw new RuntimeException(String.format(
-                                "Field %s must be a ClusterWait.", field.getName()));
+                                "Field %s must be a ClusterWait or List<ClusterWait>.", field.getName()), e);
                     }
                 })
                 .collect(toList());

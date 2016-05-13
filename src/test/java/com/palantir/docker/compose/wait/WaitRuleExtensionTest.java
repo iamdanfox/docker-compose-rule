@@ -20,16 +20,26 @@ import static org.mockito.Mockito.mock;
 
 import com.palantir.docker.compose.connection.Cluster;
 import com.palantir.docker.compose.connection.waiting.ClusterWait;
+import com.palantir.docker.compose.wait.WaitRule.AbstractBuilder;
 import org.junit.Test;
 
 public class WaitRuleExtensionTest {
 
     private WaitRule r1 = WaitRule.builder()
+            .doNothingMethod()
             .waitFor(mock(ClusterWait.class))
             .waitingForService(null, null, null)
             .waitingForService(null, null, null)
             .cluster(mock(Cluster.class))
+            .build();
+
+    private WaitRule r2 = new MyWaitForBuilder()
+            .addTwoClusterWaits(mock(ClusterWait.class), mock(ClusterWait.class))
+            .waitFor(mock(ClusterWait.class))
             .doNothingMethod()
+            .waitFor(mock(ClusterWait.class))
+            .addTwoClusterWaits(mock(ClusterWait.class), mock(ClusterWait.class))
+            .cluster(mock(Cluster.class))
             .build();
 
     @Test
@@ -37,4 +47,26 @@ public class WaitRuleExtensionTest {
 
     }
 
+    public interface MyBuilderMixin<B> extends WaitRule.BuilderMixin1<B> {
+
+        default B addTwoClusterWaits(ClusterWait one, ClusterWait two) {
+            waitFor(one);
+            waitFor(two);
+            return self();
+        }
+
+    }
+
+    public static class MyWaitForBuilder extends AbstractBuilder implements MyBuilderMixin<MyWaitForBuilder> {
+
+        public MyWaitForBuilder addThreeWaits(ClusterWait one, ClusterWait two, ClusterWait three) {
+            return waitFor(one).waitFor(two).waitFor(three);
+        }
+
+        @Override
+        public MyWaitForBuilder self() {
+            return this;
+        }
+
+    }
 }

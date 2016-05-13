@@ -58,16 +58,39 @@ public class WaitRule implements TestRule {
 
     }
 
-    public static ConcreteBuilder builder() {
-        return new ConcreteBuilder();
+    public static Builder builder() {
+        return new Builder();
     }
 
+    /**
+     * To be an customizable builder, we require that any method can be chained after any other
+     * method, irrespective of whether the method was implemented in this library or added
+     * as a mixin.
+     *
+     * To achieve this, we have one type parameter, B, and the method self().  All chainable
+     * methods return B, so it it remains unconstrained right until the last minute, when someone
+     * actually writes a concrete class (and they set B to be that concrete class).
+     *
+     * Since Java allows the eventual class to implement any number of interfaces, users can
+     * add mixed-in chainable methods by implementing them as default methods on interfaces.
+     * As long as they always return B, they will chain up beautifully.
+     *
+     * These user-added interfaces need to mutate the builder from their `default` methods,
+     * so we must expose a few mutation methods to bootstrap everything.  In a wonderful turn of
+     * fate, we can actually implement all this mutability in a nicely encapsulated way, by
+     * providing an abstract class that only has private fields.
+     */
     public interface BaseBuilderInterface<B> {
+
+        // chaining magic - left unimplemented until the last class
         B self();
+
+        // mutation methods
         ImmutableList.Builder<ClusterWait> waits();
         Cluster cluster();
         void setCluster(Cluster cluster);
 
+        // core builder methods
         default WaitRule build() {
             Cluster cluster = cluster();
             Preconditions.checkNotNull(cluster, "cluster must not be null");
@@ -85,7 +108,16 @@ public class WaitRule implements TestRule {
         }
     }
 
-    public interface IBuilder1<B> extends BaseBuilderInterface<B> {
+    public static class Builder extends AbstractBuilder implements BuilderMixin1<Builder> {
+
+        @Override
+        public Builder self() {
+            return this;
+        }
+
+    }
+
+    public interface BuilderMixin1<B> extends BaseBuilderInterface<B> {
 
         default B waitingForService(String serviceName, HealthCheck<Container> healthCheck, Duration timeout) {
             ClusterHealthCheck clusterHealthCheck = serviceHealthCheck(serviceName, healthCheck);
@@ -93,34 +125,23 @@ public class WaitRule implements TestRule {
             return self();
         }
 
-    }
-
-    public interface IBuilder2<B> extends BaseBuilderInterface<B> {
-
         default B doNothingMethod() {
             return self();
         }
 
     }
 
-    public static class ConcreteBuilder implements IBuilder1<ConcreteBuilder>, IBuilder2<ConcreteBuilder> {
+    public static class AbstractBuilder {
 
         private ImmutableList.Builder<ClusterWait> waits = ImmutableList.builder();
         private Cluster cluster = null;
 
-        @Override
-        public ConcreteBuilder self() {
-            return this;
-        }
-        @Override
         public ImmutableList.Builder<ClusterWait> waits() {
             return waits;
         }
-        @Override
         public Cluster cluster() {
             return cluster;
         }
-        @Override
         public void setCluster(Cluster cluster) {
             this.cluster = cluster;
         }

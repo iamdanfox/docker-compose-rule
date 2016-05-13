@@ -17,6 +17,7 @@ import com.palantir.docker.compose.connection.ImmutableCluster;
 import com.palantir.docker.compose.connection.waiting.ClusterHealthCheck;
 import com.palantir.docker.compose.connection.waiting.ClusterWait;
 import com.palantir.docker.compose.connection.waiting.HealthCheck;
+import com.palantir.docker.compose.connection.waiting.MessageReportingClusterWait;
 import com.palantir.docker.compose.execution.DefaultDockerCompose;
 import com.palantir.docker.compose.execution.DockerCompose;
 import com.palantir.docker.compose.execution.DockerComposeExecArgument;
@@ -166,7 +167,7 @@ public abstract class DockerComposeRule extends ExternalResource {
 
         public ImmutableDockerComposeRule.Builder waitingForService(String serviceName, HealthCheck<Container> healthCheck, Duration timeout) {
             ClusterHealthCheck clusterHealthCheck = serviceHealthCheck(serviceName, healthCheck);
-            return addClusterWait(new ClusterWait(clusterHealthCheck, timeout));
+            return addClusterWait(new MessageReportingClusterWait(clusterHealthCheck, timeout));
         }
 
         public ImmutableDockerComposeRule.Builder waitingForServices(List<String> services, HealthCheck<List<Container>> healthCheck) {
@@ -175,7 +176,7 @@ public abstract class DockerComposeRule extends ExternalResource {
 
         public ImmutableDockerComposeRule.Builder waitingForServices(List<String> services, HealthCheck<List<Container>> healthCheck, Duration timeout) {
             ClusterHealthCheck clusterHealthCheck = serviceHealthCheck(services, healthCheck);
-            return addClusterWait(new ClusterWait(clusterHealthCheck, timeout));
+            return addClusterWait(new MessageReportingClusterWait(clusterHealthCheck, timeout));
         }
 
         public ImmutableDockerComposeRule.Builder waitingForHostNetworkedPort(int port, HealthCheck<DockerPort> healthCheck) {
@@ -184,7 +185,7 @@ public abstract class DockerComposeRule extends ExternalResource {
 
         public ImmutableDockerComposeRule.Builder waitingForHostNetworkedPort(int port, HealthCheck<DockerPort> healthCheck, Duration timeout) {
             ClusterHealthCheck clusterHealthCheck = transformingHealthCheck(cluster -> new DockerPort(cluster.ip(), port, port), healthCheck);
-            return addClusterWait(new ClusterWait(clusterHealthCheck, timeout));
+            return addClusterWait(new MessageReportingClusterWait(clusterHealthCheck, timeout));
         }
     }
 }

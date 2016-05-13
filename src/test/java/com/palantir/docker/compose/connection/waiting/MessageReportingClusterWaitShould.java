@@ -30,7 +30,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
 
-public class ClusterWaitShould {
+public class MessageReportingClusterWaitShould {
 
     private static final Duration DURATION = Duration.standardSeconds(1);
     private static final String IP = "192.168.100.100";
@@ -45,18 +45,17 @@ public class ClusterWaitShould {
 
     @Rule public ExpectedException exception = ExpectedException.none();
 
-
     @Test public void
     return_when_a_cluster_is_ready() {
         when(clusterHealthCheck.isClusterHealthy(cluster)).thenReturn(success());
-        ClusterWait wait = new ClusterWait(clusterHealthCheck, DURATION);
+        MessageReportingClusterWait wait = new MessageReportingClusterWait(clusterHealthCheck, DURATION);
         wait.waitUntilReady(cluster);
     }
 
     @Test public void
     check_until_a_cluster_is_ready() {
         when(clusterHealthCheck.isClusterHealthy(cluster)).thenReturn(failure("failure!"), success());
-        ClusterWait wait = new ClusterWait(clusterHealthCheck, DURATION);
+        MessageReportingClusterWait wait = new MessageReportingClusterWait(clusterHealthCheck, DURATION);
         wait.waitUntilReady(cluster);
         verify(clusterHealthCheck, times(2)).isClusterHealthy(cluster);
     }
@@ -68,7 +67,7 @@ public class ClusterWaitShould {
         exception.expect(IllegalStateException.class);
         exception.expectMessage("failure!");
 
-        ClusterWait wait = new ClusterWait(clusterHealthCheck, DURATION);
+        MessageReportingClusterWait wait = new MessageReportingClusterWait(clusterHealthCheck, DURATION);
 
         wait.waitUntilReady(cluster);
     }

@@ -15,58 +15,11 @@
  */
 package com.palantir.docker.compose.connection.waiting;
 
-import com.jayway.awaitility.Awaitility;
-import com.jayway.awaitility.core.ConditionTimeoutException;
 import com.palantir.docker.compose.connection.Cluster;
-import java.util.Optional;
-import java.util.concurrent.Callable;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
-import org.joda.time.Duration;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-public class ClusterWait {
-    private static final Logger log = LoggerFactory.getLogger(ClusterWait.class);
-    private final ClusterHealthCheck clusterHealthCheck;
-    private final Duration timeout;
+@FunctionalInterface
+public interface ClusterWait {
 
-    public ClusterWait(ClusterHealthCheck clusterHealthCheck, Duration timeout) {
-        this.clusterHealthCheck = clusterHealthCheck;
-        this.timeout = timeout;
-    }
-
-    public void waitUntilReady(Cluster cluster) {
-        final AtomicReference<Optional<SuccessOrFailure>> lastSuccessOrFailure = new AtomicReference<>(
-                Optional.empty());
-
-        log.debug("Waiting for cluster to be healthy");
-        try {
-            Awaitility.await()
-                    .pollInterval(50, TimeUnit.MILLISECONDS)
-                    .atMost(timeout.getMillis(), TimeUnit.MILLISECONDS)
-                    .until(weHaveSuccess(cluster, lastSuccessOrFailure));
-        } catch (ConditionTimeoutException e) {
-            throw new IllegalStateException(serviceDidNotStartupExceptionMessage(lastSuccessOrFailure));
-        }
-    }
-
-    private Callable<Boolean> weHaveSuccess(Cluster cluster,
-            AtomicReference<Optional<SuccessOrFailure>> lastSuccessOrFailure) {
-        return () -> {
-            SuccessOrFailure successOrFailure = clusterHealthCheck.isClusterHealthy(cluster);
-            lastSuccessOrFailure.set(Optional.of(successOrFailure));
-            return successOrFailure.succeeded();
-        };
-    }
-
-    private String serviceDidNotStartupExceptionMessage(
-            AtomicReference<Optional<SuccessOrFailure>> lastSuccessOrFailure) {
-        String healthcheckFailureMessage = lastSuccessOrFailure.get()
-                .flatMap(SuccessOrFailure::toOptionalFailureMessage)
-                .orElse("The healthcheck did not finish before the timeout");
-
-        return "The cluster failed to pass a startup check: " + healthcheckFailureMessage;
-    }
+    void waitUntilReady(Cluster cluster);
 
 }

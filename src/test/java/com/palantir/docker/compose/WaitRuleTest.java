@@ -20,10 +20,13 @@ import static org.mockito.Matchers.any;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
+import com.palantir.docker.compose.connection.Cluster;
 import com.palantir.docker.compose.connection.waiting.ClusterWait;
 import com.palantir.docker.compose.wait.WaitFor;
 import com.palantir.docker.compose.wait.WaitRule;
+import org.junit.BeforeClass;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
@@ -35,8 +38,17 @@ public class WaitRuleTest {
 
     @Rule
     public final ExpectedException exception = ExpectedException.none();
+    private Statement base = mock(Statement.class);
+    private Description description = mock(Description.class);
+    private static DockerComposeRule docker = mock(DockerComposeRule.class);
+    private static Cluster cluster = mock(Cluster.class);
 
     private static class EmptySuite {}
+
+    @BeforeClass
+    public static void before() {
+        when(docker.containers()).thenReturn(cluster);
+    }
 
     @Test
     public void shouldExplodeIfNoWaitForAnnotations() {
@@ -60,6 +72,7 @@ public class WaitRuleTest {
     }
 
     private static class SuiteWithCorrectField {
+        public static final DockerComposeRule dcr = docker;
         @WaitFor
         public static final ClusterWait service1 = mock(ClusterWait.class);
     }
@@ -70,10 +83,8 @@ public class WaitRuleTest {
         new WaitRule(suite);
     }
 
-    private Statement base = mock(Statement.class);
-    private Description description = mock(Description.class);
-
     private static class SuiteWithTwoFields {
+        public static final DockerComposeRule dcr = docker;
         @WaitFor
         public static final ClusterWait service1 = mock(ClusterWait.class);
         @WaitFor
@@ -83,8 +94,8 @@ public class WaitRuleTest {
     @Test
     public void ruleShouldWaitForAllClusterWaits() {
         SuiteWithTwoFields suite = new SuiteWithTwoFields();
-        WaitRule rule = new WaitRule(suite);
 
+        WaitRule rule = new WaitRule(suite);
         simulateJunitRun(rule);
 
         verify(suite.service1).waitUntilReady(any());
@@ -94,8 +105,8 @@ public class WaitRuleTest {
     @Test
     public void ruleShauldWaitClusterWaitsThenExecuteTestMethod() {
         SuiteWithCorrectField suite = new SuiteWithCorrectField();
-        WaitRule rule = new WaitRule(suite);
 
+        WaitRule rule = new WaitRule(suite);
         simulateJunitRun(rule);
 
         InOrder inOrder = inOrder(base, suite.service1);
@@ -106,6 +117,22 @@ public class WaitRuleTest {
             throw new RuntimeException(e);
         }
         inOrder.verifyNoMoreInteractions();
+    }
+
+    private static class SuiteWithDCR {
+        public static final DockerComposeRule dcr = docker;
+        @WaitFor
+        public static final ClusterWait service1 = mock(ClusterWait.class);
+    }
+
+    @Test
+    public void ruleShouldPassClusterFromDockerComposeRuleAutomatically() {
+        SuiteWithDCR suite = new SuiteWithDCR();
+
+        WaitRule rule = new WaitRule(suite);
+        simulateJunitRun(rule);
+
+        verify(suite.service1).waitUntilReady(cluster);
     }
 
     private void simulateJunitRun(WaitRule rule) {

@@ -18,26 +18,30 @@ package com.palantir.docker.compose.wait;
 
 import static java.util.stream.Collectors.toList;
 
+import com.palantir.docker.compose.DockerComposeRule;
+import com.palantir.docker.compose.connection.Cluster;
 import com.palantir.docker.compose.connection.waiting.ClusterWait;
 import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Stream;
 import org.junit.rules.TestRule;
 import org.junit.runner.Description;
 import org.junit.runners.model.Statement;
 
 public class WaitRule implements TestRule {
 
-    private List<ClusterWait> clusterWaits;
+    private final List<ClusterWait> clusterWaits;
+    private final Cluster cluster;
 
-    public WaitRule(Object instance) {
-        Class<?> clazz = instance.getClass();
-        List<Field> allAnnotatedFields = allAnnotatedFields(clazz);
-        clusterWaits = clusterWaits(allAnnotatedFields, instance);
+    public WaitRule(Object suite) {
+        List<Field> allAnnotatedFields = allAnnotatedFields(suite);
+        clusterWaits = clusterWaits(allAnnotatedFields, suite);
+        cluster = extractClusterFromSuite(suite);
     }
 
-    private static List<Field> allAnnotatedFields(Class<?> clazz) {
-        List<Field> list = Arrays.stream(clazz.getFields())
+    private static List<Field> allAnnotatedFields(Object suite) {
+        List<Field> list = Arrays.stream(suite.getClass().getFields())
                 .filter(field -> field.getAnnotation(WaitFor.class) != null)
                 .collect(toList());
         if (list.isEmpty()) {
@@ -61,13 +65,30 @@ public class WaitRule implements TestRule {
                 .collect(toList());
     }
 
+    private static Cluster extractClusterFromSuite(Object suite) {
+        return Arrays.stream(suite.getClass().getFields())
+                .peek(f -> f.setAccessible(true))
+                .flatMap(f -> {
+                    try {
+                        DockerComposeRule docker = (DockerComposeRule) f.get(suite);
+                        return Stream.of(docker);
+                    } catch (Exception e) {
+                        return Stream.empty();
+                    }
+                })
+                .findFirst()
+                .map(DockerComposeRule::containers)
+                .orElseThrow(() -> new IllegalStateException("WaitRule requires a DockerComposeRule field to extract a cluster from"));
+
+    }
+
     @Override
     public Statement apply(Statement base, Description description) {
         return new Statement() {
             @Override
             public void evaluate() throws Throwable {
                 try {
-                    clusterWaits.forEach(wait -> wait.waitUntilReady(null));
+                    clusterWaits.forEach(wait -> wait.waitUntilReady(cluster));
                     base.evaluate();
                 } finally {
                     System.out.print("done");

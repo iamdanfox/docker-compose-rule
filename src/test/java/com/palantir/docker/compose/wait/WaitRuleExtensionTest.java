@@ -43,7 +43,7 @@ public class WaitRuleExtensionTest {
 
     }
 
-    public interface MyMixin<B> extends WaitRule.NiceFeature1<B> {
+    public interface MyMixin<B> extends WaitRule.NiceBuilderFeatures<B> {
 
         default B addTwoClusterWaits(ClusterWait one, ClusterWait two) {
             waitFor(one);
@@ -54,7 +54,7 @@ public class WaitRuleExtensionTest {
     }
 
     public static class MyBuilder extends AbstractBuilder
-            implements MyMixin<MyBuilder>, WaitRule.NiceFeature2<MyBuilder> {
+            implements MyMixin<MyBuilder>, WaitRule.ExtraHelperFeature<MyBuilder> {
 
         public MyBuilder addThreeWaits(ClusterWait one, ClusterWait two, ClusterWait three) {
             return waitFor(one).waitFor(two).waitFor(three);

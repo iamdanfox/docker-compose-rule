@@ -19,8 +19,13 @@ package com.palantir.docker.compose.wait;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.palantir.docker.compose.connection.Cluster;
+import com.palantir.docker.compose.connection.Container;
+import com.palantir.docker.compose.connection.waiting.ClusterHealthCheck;
 import com.palantir.docker.compose.connection.waiting.ClusterWait;
+import com.palantir.docker.compose.connection.waiting.HealthCheck;
+import com.palantir.docker.compose.connection.waiting.MessageReportingClusterWait;
 import java.util.List;
+import org.joda.time.Duration;
 import org.junit.rules.TestRule;
 import org.junit.runner.Description;
 import org.junit.runners.model.Statement;
@@ -40,12 +45,8 @@ public class WaitRule implements TestRule {
         return new Statement() {
             @Override
             public void evaluate() throws Throwable {
-                try {
-                    clusterWaits.forEach(wait -> wait.waitUntilReady(cluster));
-                    base.evaluate();
-                } finally {
-                    System.out.print("done");
-                }
+                clusterWaits.forEach(wait -> wait.waitUntilReady(cluster));
+                base.evaluate();
             }
         };
 
@@ -58,66 +59,76 @@ public class WaitRule implements TestRule {
     /*
      * WE NEED BETTER BUILDERS
      *
-     * The Java Builder pattern is delightfully ergonomic.  Netflix's Feign is one of my
-     * favourites.  You use it out of the box:
+     * The Java Builder pattern is delightfully ergonomic. I've been using DockerComposeRule
+     * recently to orchestrate end-to-end tests have started noticing a few shortcomings
+     * with the builder pattern in general.
      *
-     *      Feign.builder().build()
+     * DockerComposeRule is nice and simple to start with. You can fire up a docker-compose
+     * cluster with the following:
      *
-     * Or customize it with all your favourite options:
-     *
-            Feign.builder()
-                .contract(new GuavaOptionalAwareContract(new JAXRSContract()))
-                .encoder(new InputStreamDelegateEncoder(new JacksonEncoder(ObjectMappers.guavaJdk7())))
-                .decoder(new OptionalAwareDecoder(
-                        new InputStreamDelegateDecoder(
-                                new TextDelegateDecoder(
-                                        new JacksonDecoder(ObjectMappers.guavaJdk7())))))
-                .errorDecoder(SerializableErrorErrorDecoder.INSTANCE)
-                .retryer(NeverRetryingBackoffStrategy.INSTANCE)
-                .client(FeignClientFactory.okHttpClient())
-                .build();
+     *     @ClassRule
+     *     static DockerComposeRule simple = DockerComposeRule.builder()
+                   .files(dockerComposeYml)
+                   .build();
 
-     * Now, let's say that blob of code above works perfectly for you. You're feeling pretty
-     * pleased that you've figured out all those clever options.
-     * It's just a bit unwieldy right now.
-     * You don't really want to write 11 lines of code every time you need an http client.
-     * You do the sensible thing, you wrap it in all up in a factory somewhere.
-     * Now you can just write:
+     * A more advanced usage might involve saving logs and waiting until some containers
+     * have fully started up:
      *
-     *      FeignClients.standard();
+           @ClassRule
+           static DockerComposeRule advanced = DockerComposeRule.builder()
+                   .files(Utils.loadYmlResourceFor(MyTest.class))
+                   .saveLogsTo(Utils.logsLocationFor(MyTest.class))
+                   .projectName(Utils.projectNameFor(MyTest.class))
+                   .addClusterWait(HADOOP)
+                   .addClusterWait(SELENIUM)
+                   .addClusterWait(new MessageReportingClusterWait(
+                       serviceHealthCheck("myservice", toRespondOverHttp(8081, "/healthcheck"))))
+                   .skipShutdown(Utils.skipShutdownExceptOnCI())
+                   .build();
+
+     * This block of code quickly starts cropping up in lots of tests, each time with a few subtle
+     * differences.
      *
-     * Problem solved.  Until you sit down and realise that you started with the wonderfully
-     * flexible Feign API and now you're jamming your defaults down everyone's throats.
-     *
-     * Let's say you just want to swap out that Object Mapper.  guavaJdk7() is fine most of the
-     * time, but for a few hot new products you want to use ObjectMappers.guavaJdk8().  You stare
-     * at your factory.  Maybe you should add a parameter?
-     * Maybe you should just return the unfinished Netflix builder and let people call more methods
-     * and then build() it themselves?
-     *
-     * Neither are quite satisfactory in my opinion.  What starts out as one extra factory method:
-     *
-     *     FeignClients.standard(ObjectMapper mapper)
-     *
-     * Quickly scope creeps into a nightmare
-     *
-     *     FeignClients.standard(ObjectMapper mapper, boolean disableClientSsl, int maxRetries).
-     *
-     * Returning a builder doesn't really help either:
-     *
-     *      FeignClients.defaultBuilder()
-     *          .encoder(new InputStreamDelegateEncoder(new JacksonEncoder(ObjectMappers.guavaJdk8())))
-                .decoder(new OptionalAwareDecoder(
-                        new InputStreamDelegateDecoder(
-                                new TextDelegateDecoder(
-                                        new JacksonDecoder(ObjectMappers.guavaJdk8())))))
-                .build();
+         * You don't really want to write 11 lines of code every time you need an http client.
+         * You do the sensible thing, you wrap it in all up in a factory somewhere.
+         * Now you can just write:
+         *
+         *      FeignClients.standard(SomeService.class, url);
+         *
+         * Problem solved.  Except it's not really solved.  You started with the wonderfully
+         * flexible Feign API and now you've hard coded all your defaults and no-one can change them.
+         *
+         * Let's say you just want to swap out that Object Mapper.  guavaJdk7() is fine most of the
+         * time, but for a few hot new products you want to use guavaJdk8().  You eye that
+         * factory method.  Maybe you should add a parameter?
+         * Maybe you should just return the unfinished Netflix builder and let people build() it
+         * themselves?
+         *
+         * Neither are satisfactory in my opinion.  What starts out as one extra factory method:
+         *
+         *     FeignClients.standard(ObjectMapper mapper, Class<?> interface, String url)
+         *
+         * Quickly scope creeps into a nightmare
+         *
+         *     FeignClients.standard(ObjectMapper mapper, boolean disableClientSsl, int maxRetries, Class<?> interface, String url).
+         *
+         * Returning a builder doesn't really help either, because we still duplicate a ton of code
+         * just to put in the guavaJdk8() mapper:
+         *
+         *      FeignClients.defaultBuilder()
+         *          .encoder(new InputStreamDelegateEncoder(new JacksonEncoder(ObjectMappers.guavaJdk8())))
+                    .decoder(new OptionalAwareDecoder(
+                            new InputStreamDelegateDecoder(
+                                    new TextDelegateDecoder(
+                                            new JacksonDecoder(ObjectMappers.guavaJdk8())))))
+                    .target(SomeService.class, url)
+                    .build();
 
      * I don't want to settle for this. I want maximum configurability from a library,
      * but as soon as I start using it, I want to set all my defaults. I want convenience methods.
      * I want shorthands, but I don't want to sacrifice any of the library's flexibility.
      *
-     * I want to be able to define my own shorthands add them to the library.
+     * Ideally, I want to be able to define my own shorthands add them to the library.
      *
      *      MyFeign.builder()
      *              .innerObjectMapper(ObjectMappers.guaveJdk8())
@@ -136,10 +147,11 @@ public class WaitRule implements TestRule {
      * us check Docker containers have started up before we start hitting them with our
      * tests.
      *
-     * My first thought was why don't we just let people extend our Builder?  Like many first
-     * attempts, this turns out to be pretty dumb.  We can write our lovely builder:
+     * My first thought was: why don't we just let people extend our Builder?  Like many first
+     * attempts, this turned out to be pretty dumb.  We can write our lovely builder:
      *
      *     public class Builder {
+     *
      *         public WaitRule build();
      *
      *         public Builder waitFor(ClusterWait wait);
@@ -147,7 +159,8 @@ public class WaitRule implements TestRule {
      *         public Builder cluster(Cluster c);
      *     }
      *
-     * But as soon as someone tries to it, they hit a problem:
+     * But as soon as someone tries to extend it, they hit a problem: some method orderings
+     * don't compile.
      *
      *     public class MyBuilder extends Builder {
      *
@@ -155,56 +168,89 @@ public class WaitRule implements TestRule {
      *
      *     }
      *
-     *     // trivial usage seems to work:
+     *     // this seems to work:
      *
      *     new MyBuilder()
      *         .waitForAll(SOME_SERVICE, ANOTHER_SERVICE)
-     *         .cluster(docker.cluster());
+     *         .cluster(docker.cluster())
+     *         .build();
      *
-     *     // but alas this doesn't work
+     *     // but this doesn't compile:
      *
      *     new MyBuilder()
      *         .cluster(docker.cluster()) // <- returns `Builder` not a `MyBuilder`!
-     *         .waitForAll(SOME_SERVICE, ANOTHER_SERVICE); // <- error :(
+     *         .waitForAll(SOME_SERVICE, ANOTHER_SERVICE) // <- error :(
+     *         .build()
      *
+     * This is not good enough. As a user, I want my custom methods to chain up nicely
+     * with the library's official ones, regardless of the order I put them in.
      *
-     * Let's start with the chaining problem.  As a library author, we want all our users' builder
-     * methods to chain up nicely with our own 'official' ones.
+     * To achieve this, we're going to need generics. Introducing the `Chainable` interface.
+     * It has just one type parameter and one method.
      *
-     * To make this work, we're going to need one generic interface.
-     * It has a type parameter, B, and the method self().
-     * We'll make require that the all our users' custom methods return this parameter B,
-     * so it it remains unconstrained right until the last minute, when someone
-     * actually writes a concrete class (and they set B to be that concrete class).
+     * We'll require that all builder methods return this parameter B,
+     * which will remain unconstrained right until the last minute, when someone
+     * actually writes a non-generic, concrete class.
      */
+
     public interface Chainable<B> {
         B self();
     }
 
     /**
-     * Since Java allows the eventual class to implement any number of interfaces, users can
-     * add mixed-in chainable methods by implementing them as default methods on interfaces.
+     * Now since Java allows classes to implement any number of interfaces, we can almost
+     * simulate 'mixins' by implementing default methods on interfaces.
      * As long as they always return B, they will chain up beautifully.
      *
-     * These user-added interfaces need to mutate the builder from their `default` methods,
-     * so we must expose a few mutation methods to bootstrap everything.
+     * These user-added interfaces will mutate the builder state from their `default` methods,
+     * so we must expose a few getter and setter methods to bootstrap everything.
      */
     public interface BaseMutability {
         ImmutableList.Builder<ClusterWait> waits();
-        Cluster cluster();
+        Cluster getCluster();
         void setCluster(Cluster cluster);
 
         default WaitRule build() {
-            Cluster cluster = cluster();
+            Cluster cluster = getCluster();
             Preconditions.checkNotNull(cluster, "cluster must not be null");
             return new WaitRule(waits().build(), cluster);
         }
     }
 
     /**
-     * In a wonderful turn of fate, we can actually implement all this mutability
-     * in a nicely encapsulated way, by providing an abstract class that
-     * only has private fields.
+     * We can then implement some nice ergonomic builder methods, by utilising the
+     * BaseMutability and Chainable interfaces.
+     *
+     * We keep the type parameter B so that this interface can be further extended.
+     */
+    public interface NiceBuilderFeatures<B> extends BaseMutability, Chainable<B> {
+        default B waitFor(ClusterWait element) {
+            waits().add(element);
+            return self();
+        }
+
+        default B cluster(Cluster cluster) {
+            setCluster(cluster);
+            return self();
+        }
+    }
+
+    public interface ExtraHelperFeature<B> extends BaseMutability, Chainable<B> {
+
+        default B waitForContainer(String containerName, HealthCheck<Container> containerCheck) {
+            ClusterHealthCheck clusterCheck = ClusterHealthCheck.serviceHealthCheck(
+                    containerName, containerCheck);
+            ClusterWait wait = new MessageReportingClusterWait(
+                    clusterCheck, Duration.standardMinutes(2));
+            waits().add(wait);
+            return self();
+        }
+
+    }
+
+    /**
+     * Conveniently, we can actually implement all the mutability
+     * in a nice encapsulated way by writing an abstract class that only has private fields.
      */
     public static class AbstractBuilder implements BaseMutability {
 
@@ -216,7 +262,7 @@ public class WaitRule implements TestRule {
             return waits;
         }
         @Override
-        public Cluster cluster() {
+        public Cluster getCluster() {
             return cluster;
         }
         @Override
@@ -227,34 +273,14 @@ public class WaitRule implements TestRule {
     }
 
     /**
-     * We can then implement some nice ergonomic builder methods, by utilising the
-     * BaseMutability and Chainable interfaces.
-     *
-     * We keep the type parameter B so that this interface can be further extended.
-     */
-    public interface NiceFeature1<B> extends BaseMutability, Chainable<B> {
-        default B waitFor(ClusterWait element) {
-            waits().add(element);
-            return self();
-        }
-    }
-
-    public interface NiceFeature2<B> extends BaseMutability, Chainable<B> {
-        default B cluster(Cluster cluster) {
-            setCluster(cluster);
-            return self();
-        }
-    }
-
-    /**
      * Finally, when we a user wants to actually use their builder, they simply
      * extend the AbstractBuilder with whatever selection of chainable mixins they want.
      *
      * By implementing `self` and nailing down that type parameter, all the Chainable
-     * mixins from above will returns this class.
+     * mixins from above will returns this concrete builder class.
      */
     public static class Builder extends AbstractBuilder
-            implements NiceFeature1<Builder>, NiceFeature2<Builder> {
+            implements NiceBuilderFeatures<Builder>, ExtraHelperFeature<Builder> {
 
         @Override
         public Builder self() {
@@ -262,5 +288,16 @@ public class WaitRule implements TestRule {
         }
 
     }
+
+    /**
+     * To conclude, we've seen how even the best Java builders can get unwieldy when you
+     * want to re-use defaults or re-use some construction code.  We tried to write an
+     * inheritance-based builder (and failed).  Finally, we used Java 8 interfaces to
+     * write a completely customizable builder.
+     *
+     * Now I don't think this approach is suitable for all builders - we used 4 interfaces and both
+     * an abstract and a concrete class just to implement one builder.  Nonetheless, if you're
+     * writing a library and you want to make it as ergonomic as possible, I think it's worth a shot.
+     */
 
 }

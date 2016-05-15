@@ -38,12 +38,16 @@ public class WaitRuleExtensionTest {
             .cluster(mock(Cluster.class))
             .build();
 
+    private WaitRule r3 = new WaitRule.MyWaitRule.Builder()
+            .waitForAllPorts("somecontainer")
+            .build();
+
     @Test
     public void go() {
 
     }
 
-    public interface MyMixin<B> extends WaitRule.NiceBuilderFeatures<B> {
+    public interface MyMixin<B> extends WaitRule.FluentBuilderFeatures<B> {
 
         default B addTwoClusterWaits(ClusterWait one, ClusterWait two) {
             waitFor(one);
@@ -54,7 +58,7 @@ public class WaitRuleExtensionTest {
     }
 
     public static class MyBuilder extends AbstractBuilder
-            implements MyMixin<MyBuilder>, WaitRule.ExtraHelperFeature<MyBuilder> {
+            implements MyMixin<MyBuilder>, WaitRule.ExtraBuilderFeature<MyBuilder> {
 
         public MyBuilder addThreeWaits(ClusterWait one, ClusterWait two, ClusterWait three) {
             return waitFor(one).waitFor(two).waitFor(three);

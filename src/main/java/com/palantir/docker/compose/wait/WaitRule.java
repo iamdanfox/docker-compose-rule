@@ -18,17 +18,101 @@ package com.palantir.docker.compose.wait;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
+import com.palantir.docker.compose.DockerComposeRule;
 import com.palantir.docker.compose.connection.Cluster;
 import com.palantir.docker.compose.connection.waiting.ClusterHealthCheck;
 import com.palantir.docker.compose.connection.waiting.ClusterWait;
 import com.palantir.docker.compose.connection.waiting.HealthChecks;
 import com.palantir.docker.compose.connection.waiting.MessageReportingClusterWait;
 import java.util.List;
-import org.joda.time.Duration;
 import org.junit.rules.TestRule;
 import org.junit.runner.Description;
 import org.junit.runners.model.Statement;
 
+/*
+ * WE NEED BETTER BUILDERS
+ *
+ * The Java Builder pattern is delightfully ergonomic but I've recently been frustrated by
+ * their lack of customizability (without completely a re-implementation).
+ *
+ * I've been using DockerComposeRule's builder to orchestrate end-to-end tests.
+ * DockerComposeRule lets you fire up a docker-compose
+ * cluster, save logs from them and wait for containers to start up fully:
+ *
+       @ClassRule
+       static DockerComposeRule advanced = DockerComposeRule.builder()
+               .files(Utils.loadYmlResourceFor(MyTest.class))
+               .saveLogsTo(Utils.logsLocationFor(MyTest.class))
+               .projectName(Utils.projectNameFor(MyTest.class))
+               .addClusterWait(new MessageReportingClusterWait(
+                       serviceHealthCheck("hadoop", toHaveAllPortsOpen())))
+               .addClusterWait(SELENIUM)
+               .addClusterWait(MY_SERVICE)
+               .skipShutdown(Utils.skipShutdownExceptOnCI())
+               .build();
+
+ * Blocks of code like this quickly start cropping up in lots of tests, each time with a few
+ * subtle differences.
+ * Clearly, it's not the prettiest.
+ * I'm calling a bunch of utility methods to automatically fill in parameters, and that
+ * big old MessageReportingClusterWait is ugly.
+ *
+ * Also, 11 lines of code is a bit excessive for every MY_SERVICE test,
+ * so it could be wrapped up in a factory method:
+ *
+         @ClassRule
+         static DockerComposeRule docker = MyDockerComposeRule.for(MyTest.class);
+
+ * The trouble is, I need to vary the containers that I wait for.  No problem, I can just
+ * return the builder:
+ *
+         @ClassRule
+         static DockerComposeRule docker = MyDockerComposeRule.builderFor(MyTest.class)
+                   .addClusterWait(new MessageReportingClusterWait(
+                           serviceHealthCheck("fake-s3", toHaveAllPortsOpen())))
+                   .addClusterWait(SELENIUM)
+                   .addClusterWait(MY_SERVICE)
+                   .build()
+
+ * This is slightly better, but that MessageReportingClusterWait thing is ugly and often
+ * duplicated. Ideally, there would be a nice fluent method:
+ *
+ *       .waitForAllPorts("fake-s3")
+ *
+ * For some libraries, it's totally feasible to just submit a PR and add a builder method.
+ * However, sometimes your helper methods are very specific to your project and might not
+ * be accepted into the upstream repo.  For example, you probably couldn't get a method
+ * added to Feign that would add a highly customized ObjectMapper, `mapper`:
+ *
+ *      .encoder(new InputStreamDelegateEncoder(new JacksonEncoder(mapper)))
+        .decoder(new OptionalAwareDecoder(
+                new InputStreamDelegateDecoder(
+                        new TextDelegateDecoder(
+                                new JacksonDecoder(mapper)))))
+ *
+ * I don't think we should settle for this. I want convenience methods and I want shorthands,
+ * but library maintainers clearly can't accept everyone's special-snowflake contributions.
+ *
+ * What we really need is an extensible builder - then I could add crazy stuff to
+ * DockerComposeRule like:
+ *
+        .waitForHttpsEndpointIgnoringCerts("someservice", 443, "/healthcheck")
+        .waitForAtLeastOneOf(DB1, DB2, DB3)
+
+ * A MIXIN BUILDER:
+ *
+ * I think we can write a better, customizable builder for our libraries.
+ * It'll have the same fluent API that we know and love, but
+ * users will be able to stick their own methods right in the middle of their chain.
+ *
+ */
+
+/**
+ * I've extracted the waiting behaviour from DockerComposeRule into `WaitRule` to provide
+ * a concise example.
+ * WaitRule lets us check Docker containers have started up before
+ * we start hitting them with our tests.
+ */
 public class WaitRule implements TestRule {
 
     private final List<ClusterWait> clusterWaits;
@@ -51,93 +135,7 @@ public class WaitRule implements TestRule {
 
     }
 
-    public static Builder builder() {
-        return new Builder();
-    }
-
-    /*
-     * WE NEED BETTER BUILDERS
-     *
-     * The Java Builder pattern is delightfully ergonomic but I've started noticing deficiencies.
-     *
-     * I've been using DockerComposeRule's builder to orchestrate end-to-end tests.
-     * DockerComposeRule lets you fire up a docker-compose
-     * cluster, save logs from them and wait for containers to start up fully:
-     *
-           @ClassRule
-           static DockerComposeRule advanced = DockerComposeRule.builder()
-                   .files(Utils.loadYmlResourceFor(MyTest.class))
-                   .saveLogsTo(Utils.logsLocationFor(MyTest.class))
-                   .projectName(Utils.projectNameFor(MyTest.class))
-                   .addClusterWait(new MessageReportingClusterWait(
-                           serviceHealthCheck("hadoop", toHaveAllPortsOpen())))
-                   .addClusterWait(SELENIUM)
-                   .addClusterWait(MY_SERVICE)
-                   .skipShutdown(Utils.skipShutdownExceptOnCI())
-                   .build();
-
-     * Blocks of code like this quickly start cropping up in lots of tests, each time with a few
-     * subtle differences.
-     * Clearly, it's not the prettiest.
-     * I'm calling a bunch of utility methods to automatically fill in parameters, and that
-     * big old MessageReportingClusterWait is ugly.
-     *
-     * Also, 11 lines of code is a bit excessive for every MY_SERVICE test,
-     * so it could be wrapped up in a factory method:
-     *
-             @ClassRule
-             static DockerComposeRule docker = MyDockerComposeRule.for(MyTest.class);
-
-     * The trouble is, I need to vary the containers that I wait for.  No problem, I can just
-     * return the builder:
-     *
-             @ClassRule
-             static DockerComposeRule docker = MyDockerComposeRule.builderFor(MyTest.class)
-                       .addClusterWait(new MessageReportingClusterWait(
-                               serviceHealthCheck("fake-s3", toHaveAllPortsOpen())))
-                       .addClusterWait(SELENIUM)
-                       .addClusterWait(MY_SERVICE)
-                       .build()
-
-     * This is slightly better, but that MessageReportingClusterWait thing is ugly and often
-     * duplicated. Ideally, there would be a nice fluent method:
-     *
-     *       .waitForAllPorts("fake-s3")
-     *
-     * For some libraries, it's totally feasible to just submit a PR and add a builder method.
-     * However, sometimes your helper methods are very specific to your project and might not
-     * be accepted into the upstream repo.  For example, you probably couldn't get a method
-     * added to Feign that would use a highly customized ObjectMapper, `mapper`:
-     *
-     *      .encoder(new InputStreamDelegateEncoder(new JacksonEncoder(mapper)))
-            .decoder(new OptionalAwareDecoder(
-                    new InputStreamDelegateDecoder(
-                            new TextDelegateDecoder(
-                                    new JacksonDecoder(mapper)))))
-     *
-     * I don't think we should settle for this. I want convenience methods and I want shorthands,
-     * but library maintainers clearly can't accept everyone's special snowflake contributions.
-     *
-     * What we really need it an extensible builder - then I could add crazy stuff to
-     * DockerComposeRule like:
-     *
-            .waitForEndpointIgnoringSSL("someservice", 443, "/healthcheck")
-            .waitForAtLeastOneOf(DB1, DB2, DB3)
-
-     * A MIXIN BUILDER:
-     *
-     * I think we can write a better, customizable builder for our libraries.
-     * It'll have the same fluent API that we know and love, but
-     * users will be able to stick their own methods right in the middle of their chain.
-     *
-     */
-
     /**
-     * I've extracted the waiting behaviour from DockerComposeRule into `WaitRule` to provide
-     * a concise example.
-     * WaitRule lets us check Docker containers have started up before
-     * we start hitting them with our tests.
-     *
      * My first thought was: why don't we just let people extend the Builder?  Like many first
      * attempts, this turned out to be pretty dumb.  We can write our lovely builder:
      *
@@ -213,7 +211,7 @@ public class WaitRule implements TestRule {
      *
      * We keep the type parameter B so that this interface can be further extended.
      */
-    public interface NiceBuilderFeatures<B> extends BaseMutability, Chainable<B> {
+    public interface FluentBuilderFeatures<B> extends BaseMutability, Chainable<B> {
         default B waitFor(ClusterWait element) {
             waits().add(element);
             return self();
@@ -223,19 +221,6 @@ public class WaitRule implements TestRule {
             setCluster(cluster);
             return self();
         }
-    }
-
-    public interface ExtraHelperFeature<B> extends BaseMutability, Chainable<B> {
-
-        default B waitForAllPorts(String containerName) {
-            ClusterHealthCheck clusterCheck = ClusterHealthCheck.serviceHealthCheck(
-                    containerName, HealthChecks.toHaveAllPortsOpen());
-            ClusterWait wait = new MessageReportingClusterWait(
-                    clusterCheck, Duration.standardMinutes(2));
-            waits().add(wait);
-            return self();
-        }
-
     }
 
     /**
@@ -263,14 +248,12 @@ public class WaitRule implements TestRule {
     }
 
     /**
-     * Finally, when we a user wants to actually use their builder, they simply
-     * extend the AbstractBuilder with whatever selection of chainable mixins they want.
-     *
+     * The WaitRule library should supply at least a basic builder.
      * By implementing `self` and nailing down that type parameter, all the Chainable
      * mixins from above will returns this concrete builder class.
      */
     public static class Builder extends AbstractBuilder
-            implements NiceBuilderFeatures<Builder>, ExtraHelperFeature<Builder> {
+            implements FluentBuilderFeatures<Builder> {
 
         @Override
         public Builder self() {
@@ -279,11 +262,56 @@ public class WaitRule implements TestRule {
 
     }
 
+    public static Builder builder() {
+        return new Builder();
+    }
+
     /**
-     * To conclude, we've seen how Java builders can get unwieldy when you
-     * want to re-use defaults or end up with verbose construction code.  We tried to write an
+     * When a user wants to extend this builder, they can simply
+     * write an interface.  Here's that `waitForAllPorts` method I mentioned above.
+     */
+    public interface ExtraBuilderFeature<B> extends BaseMutability, Chainable<B> {
+
+        default B waitForAllPorts(String containerName) {
+            ClusterHealthCheck check = ClusterHealthCheck.serviceHealthCheck(
+                    containerName,
+                    HealthChecks.toHaveAllPortsOpen());
+
+            waits().add(new MessageReportingClusterWait(
+                    check,
+                    DockerComposeRule.DEFAULT_TIMEOUT));
+
+            return self();
+        }
+
+    }
+
+    /**
+     * All they have to do now is pull that `ExtraBuilderFeature` interface into a concrete class.
+     */
+    public static class MyWaitRule {
+        public static class Builder extends AbstractBuilder
+                implements FluentBuilderFeatures<Builder>, ExtraBuilderFeature<Builder> {
+
+            @Override
+            public Builder self() {
+                return this;
+            }
+
+        }
+    }
+
+    /**
+     * To conclude, we've seen how Java builders can get unwieldy.  We tried to write an
      * inheritance-based builder (and failed).  Finally, we used Java 8 interfaces to
-     * write a completely customizable builder.
+     * write a completely customizable builder for `WaitRule` and added
+     * the `waitForAllPorts` method.
+     *
+     *      @ClassRule
+            static WaitRule rule = new MyWaitRule.Builder()
+                    .waitForAllPorts("somecontainer")
+                    .waitFor(SERVICE)
+                    .build();
      *
      * I don't think this approach is suitable for all builders - we used 4 interfaces and both
      * an abstract and a concrete class just to implement one builder.  Nonetheless, if you're
